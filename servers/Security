@@ -1,0 +1,175 @@
+# SSL / TLS
+
+Certainly! Here's a step-by-step guide with concrete commands for setting up SSL/TLS communication between Node Exporter and Prometheus:
+
+1. **Generate SSL Certificates**:
+   
+   ```bash
+   # Generate SSL certificate and key for Node Exporter
+   openssl req -x509 -newkey rsa:4096 -keyout node_exporter.key -out node_exporter.crt -days 365 -nodes -subj '/CN=node_exporter'
+
+   # Generate SSL certificate and key for Prometheus
+   openssl req -x509 -newkey rsa:4096 -keyout prometheus.key -out prometheus.crt -days 365 -nodes -subj '/CN=prometheus'
+   ```
+
+2. **Node Exporter Certificate location**:
+	Move generated certificates to the final directory
+
+	```
+	mv node_exporter* /etc/node_exporter/
+	```
+
+3. **Update Permissions**:
+	Update the permission to the folder for the user `node_exporter`
+	```
+	sudo chown -R node_exporter:node_exporter /etc/node_exporter
+	```
+
+5. **Configure Node Exporter**:
+   
+   Edit the Node Exporter configuration file (usually located at `/etc/node_exporter/node_exporter.yml`) to include the following lines:
+
+   ```yaml
+   tls_server_config:
+     cert_file: "/path/to/node_exporter.crt"
+     key_file: "/path/to/node_exporter.key"
+   ```
+
+4. **Configure Node Exporter Service**:
+	We will add the config file for node exporter executable in service file 
+	`/etc/systemd/system/node_exporter.service`
+	
+	 ```
+	...service
+	ExecStart=/usr/local/bin/node_exporter --web.config="/etc/node_exporter/node_exporter.yml"
+	...
+	```
+
+5. **Restart Service**:
+	Restart the service of the node exported
+	```bash
+	sudo systemctl daemon-reload
+	sudo systemctl restart node_exporter
+	```
+
+	After restart check status and look for confirmation with this phrase `TLS is enabled`
+	```
+	sudo systemctl restart node_exporter
+	```
+
+7. **Configure Prometheus**:
+   Edit the Prometheus configuration file (usually located at `/etc/prometheus/prometheus.yml`) to include the following lines:
+
+   ```yaml
+   scrape_configs:
+     - job_name: 'node'
+       static_configs:
+         - targets: ['node_exporter_host:9100']
+       scheme: https
+       tls_config:
+         ca_file: "/path/to/node_exporter.crt" # CA file, if self-signed, use node_exporter.crt
+         insecure_skip_verify: true
+   ```
+
+6. **Certificate Management**:
+   Ensure that the certificates (`node_exporter.crt`, `node_exporter.key`, `prometheus.crt`, `prometheus.key`) are properly managed, securely stored, and renewed before expiration.
+
+5. **Testing**:
+   
+   Restart Node Exporter and Prometheus services to apply the changes. Then, verify that Node Exporter metrics are being scraped by Prometheus over HTTPS.
+
+   ```bash
+   # Restart Node Exporter
+   sudo systemctl restart node_exporter
+
+   # Restart Prometheus
+   sudo systemctl restart prometheus
+   ```
+
+That's it! You've now set up SSL/TLS communication between Node Exporter and Prometheus. Make sure to replace `/path/to/` with the actual paths where you've stored your SSL certificates.
+
+---
+# Basic Auth
+
+1. **Install apache2-utils**: Install apache2-utils to get some important utilities
+	```bash
+	sudo apt-get update && sudo apt install apache2-utils -y
+	```
+
+2. **hash of the password**: Run the below command to create hash of the password  which will prompt for it
+	```bash
+	htpasswd -nBC 12 "" | tr -d ':\n'
+	```
+
+	Example 
+	```bash
+	$ htpasswd -nBC 12 "" | tr -d ':\n'
+	New password:
+	Re-type new password:
+	$2y$12$kWuGRgKuWcXzXINquJLRc.qS7igp1upfMm7FFXsv4TKdtwwaG6iAO
+	```
+1. **Basic Auth Configure Node Exporter**:  Edit the node exporter config `/etc/node_exporter/node_exporter.yml` and add the `basic_auth_users` block
+	```yml
+	tls_server_config:
+	  cert_file: "node_exporter.crt"
+	  key_file: "node_exporter.key"
+	basic_auth_users:
+	  prometheus: $4y$14$cpAZulplWY8..Sn4BZLNz.nhZtwW7VcPUOe676CST8HaLHCdZyy7G
+	```
+	- Username is `prometheus`
+	- password is the `hash` of the password, that was generated in the Prometheus server
+
+1. **Prometheus configuration**:  Need to add the credentials for prometheus to acces node exporter. for that we will edit the prometheus configuration `/etc/prometheus/prometheus.yml`
+
+	```yml
+	  - job_name: 'node_exporter'
+	    static_configs:
+	      - targets: ['localhost:9100']
+	    scheme: https
+	    tls_config:
+	      ca_file: "/etc/node_exporter/node_exporter.crt" # CA file, if self-signed, use node_exporter.crt
+	      insecure_skip_verify: true
+	    basic_auth:
+	      username: prometheus
+	      password: password
+	```
+
+5. **Restart Prometheus**: To implement the changes we need to restart the prometheus and test the flow.
+	```bash
+	sudo systemctl restart prometheus
+	```
+
+---
+#  Firewall config
+
+1. Drop all incoming traffic on port 9100
+```sh
+sudo iptables -A INPUT -p tcp --dport 9100 -j DROP
+```
+
+2. Allow trafic only if request is from `Promoetheus` server
+```bash
+sudo iptables -A INPUT -p tcp --dport 9100 -s x.x.x.x -j ACCEPT
+```
+
+--- 
+# Delete if needed 
+1. List all rules with line number:
+```sh
+sudo iptables -L --line-numbers
+```
+2. Delete the rule from ip tables 
+```sh
+sudo iptables -D <chain> <rule_number>
+
+
+```
+  Replace `<chain>` with the chain where the rule exists (e.g., INPUT, OUTPUT, etc.) 
+  Replace `<rule_number>` with the line number of the rule you want to delete.
+  
+For example, to delete a rule with line number 3 in the INPUT chain:
+```sh
+sudo iptables -D INPUT 3
+```
+
+
